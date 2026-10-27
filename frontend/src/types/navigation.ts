@@ -1,6 +1,7 @@
 export type PageId =
   | 'overview'
   | 'claims-intelligence'
+  | 'provider-risk'
   | 'investigation-queue'
   | 'model-insights'
   | 'data-management'

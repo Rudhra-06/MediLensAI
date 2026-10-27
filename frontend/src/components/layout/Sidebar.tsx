@@ -8,6 +8,7 @@ import {
   Settings,
   Shield,
   X,
+  Activity,
 } from 'lucide-react';
 import type { PageId } from '../../types/navigation';
 
@@ -28,6 +29,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
   { id: 'claims-intelligence', label: 'Claims Intelligence', icon: FileSearch, tag: 'Screening' },
+  { id: 'provider-risk', label: 'Provider Risk Assessment', icon: Activity, tag: 'Provider' },
   { id: 'investigation-queue', label: 'Investigation Queue', icon: ListFilter, tag: 'Queue' },
   { id: 'model-insights', label: 'Model Insights', icon: BrainCircuit, tag: 'SHAP / ML' },
   { id: 'data-management', label: 'Data Management', icon: Database },

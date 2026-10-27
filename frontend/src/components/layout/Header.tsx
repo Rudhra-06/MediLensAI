@@ -22,6 +22,10 @@ const pageTitles: Record<PageId, { title: string; subtitle: string }> = {
     title: 'Claims Intelligence',
     subtitle: 'High-throughput batch screening and explainable individual claim risk triage',
   },
+  'provider-risk': {
+    title: 'Provider Risk Assessment',
+    subtitle: 'Score a manually entered provider-level feature vector with the saved model',
+  },
   'investigation-queue': {
     title: 'Investigation Queue',
     subtitle: 'Priority review cases flagged by ML risk estimators for human auditor verification',

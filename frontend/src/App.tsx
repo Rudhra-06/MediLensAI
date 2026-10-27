@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { AppShell } from './components/layout/AppShell';
 import type { PageId } from './types/navigation';
 import type { HealthResponse, ApiConnectionState } from './types/health';
-import { fetchHealthStatus, API_BASE_URL } from './services/api';
+import type { RiskHealthResponse } from './types/risk';
+import { fetchHealthStatus, fetchRiskHealth, API_BASE_URL } from './services/api';
 
 // Pages
 import { OverviewPage } from './components/pages/OverviewPage';
@@ -11,44 +12,46 @@ import { InvestigationQueuePage } from './components/pages/InvestigationQueuePag
 import { ModelInsightsPage } from './components/pages/ModelInsightsPage';
 import { DataManagementPage } from './components/pages/DataManagementPage';
 import { SettingsPage } from './components/pages/SettingsPage';
+import { ProviderRiskPage } from './components/pages/ProviderRiskPage';
 
 export const App: React.FC = () => {
   const [activePage, setActivePage] = useState<PageId>('overview');
   const [apiState, setApiState] = useState<ApiConnectionState>('checking');
   const [healthData, setHealthData] = useState<HealthResponse | null>(null);
+  const [riskHealth, setRiskHealth] = useState<RiskHealthResponse | null>(null);
 
   const checkApiHealth = useCallback(async (isManualRefresh = false) => {
     if (isManualRefresh) {
       setApiState('checking');
     }
-    try {
-      const data = await fetchHealthStatus();
-      setHealthData(data);
+    const [apiResult, riskResult] = await Promise.allSettled([
+      fetchHealthStatus(),
+      fetchRiskHealth(),
+    ]);
+    if (apiResult.status === 'fulfilled') {
+      setHealthData(apiResult.value);
       setApiState('connected');
-    } catch {
+    } else {
       setHealthData(null);
       setApiState('disconnected');
     }
+    setRiskHealth(riskResult.status === 'fulfilled' ? riskResult.value : null);
   }, []);
 
   useEffect(() => {
-    let ignore = false;
-    fetchHealthStatus()
-      .then((data) => {
-        if (!ignore) {
-          setHealthData(data);
-          setApiState('connected');
-        }
-      })
-      .catch(() => {
-        if (!ignore) {
-          setHealthData(null);
-          setApiState('disconnected');
-        }
-      });
-    return () => {
-      ignore = true;
-    };
+    let active = true;
+    Promise.allSettled([fetchHealthStatus(), fetchRiskHealth()]).then(([apiResult, riskResult]) => {
+      if (!active) return;
+      if (apiResult.status === 'fulfilled') {
+        setHealthData(apiResult.value);
+        setApiState('connected');
+      } else {
+        setHealthData(null);
+        setApiState('disconnected');
+      }
+      setRiskHealth(riskResult.status === 'fulfilled' ? riskResult.value : null);
+    });
+    return () => { active = false; };
   }, []);
 
   const renderActivePage = () => {
@@ -57,12 +60,15 @@ export const App: React.FC = () => {
         return (
           <OverviewPage
             healthData={healthData}
+            riskHealth={riskHealth}
             apiState={apiState}
             onNavigate={setActivePage}
           />
         );
       case 'claims-intelligence':
         return <ClaimsIntelligencePage />;
+      case 'provider-risk':
+        return <ProviderRiskPage />;
       case 'investigation-queue':
         return <InvestigationQueuePage />;
       case 'model-insights':
@@ -75,6 +81,7 @@ export const App: React.FC = () => {
         return (
           <OverviewPage
             healthData={healthData}
+            riskHealth={riskHealth}
             apiState={apiState}
             onNavigate={setActivePage}
           />
