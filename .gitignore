@@ -37,7 +37,7 @@ frontend/dist-ssr/
 
 # Sensitive credentials & environment variables
 .env
-.env*.local
+.env.*
 !.env.example
 *.pem
 *.key
@@ -63,10 +63,5 @@ data/phi/*
 *.sqlite
 *.db
 
-# ML models and checkpoints (large binary files)
-models/*.pkl
-models/*.joblib
-models/*.onnx
-models/*.bin
-models/*.pt
-models/*.h5
+# Local model, metric, and explanation artifacts
+models/
