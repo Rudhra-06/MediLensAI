@@ -71,6 +71,7 @@ The general API health route is `GET /api/health`. Risk endpoints are under `/ap
 | --- | --- |
 | `GET /risk/health` | Risk model and required artifact readiness |
 | `GET /risk/features` | Feature names, domains and safe descriptions |
+| `GET /risk/insights` | Aggregate validation metrics and global SHAP importance only |
 | `POST /risk/assess` | Score one manually supplied 32-feature provider vector |
 | `POST /risk/assess/batch` | Score a bounded batch of vectors |
 | `GET /risk/demo/providers` | Optional local-only ephemeral demo references |

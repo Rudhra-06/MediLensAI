@@ -5,6 +5,7 @@ import type {
   RiskFeatureDescription,
   RiskHealthResponse,
   LocalDemoProvidersResponse,
+  ProviderRiskInsightsResponse,
 } from '../types/risk';
 
 export const API_BASE_URL: string =
@@ -52,6 +53,10 @@ export function fetchRiskFeatures(): Promise<RiskFeatureDescription[]> {
   return requestJson<{ features: RiskFeatureDescription[] }>('/api/v1/risk/features').then(
     (response) => response.features,
   );
+}
+
+export function fetchRiskInsights(): Promise<ProviderRiskInsightsResponse> {
+  return requestJson<ProviderRiskInsightsResponse>('/api/v1/risk/insights');
 }
 
 export function assessProvider(features: ProviderFeatureValues): Promise<RiskAssessmentResponse> {

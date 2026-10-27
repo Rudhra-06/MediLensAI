@@ -36,9 +36,46 @@ def test_model_health_features_and_openapi(client):
 
     schema = client.get("/openapi.json").json()
     assert "/api/v1/risk/assess" in schema["paths"]
+    assert "/api/v1/risk/insights" in schema["paths"]
     feature_schema = schema["components"]["schemas"]["ProviderRiskFeatures"]
     assert set(feature_schema["properties"]) == set(FEATURE_DEFINITIONS)
     assert feature_schema["additionalProperties"] is False
+
+
+def test_model_insights_returns_only_saved_aggregate_metrics_and_global_shap(client):
+    response = client.get("/api/v1/risk/insights")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["model_name"] == data["selected_model"] == "random_forest"
+    assert data["train_provider_count"] == 4328
+    assert data["validation_provider_count"] == 1082
+    assert set(data["validation_metrics"]) == {"dummy_prior", "logistic_regression", "random_forest"}
+    assert data["validation_metrics"]["random_forest"]["average_precision"] == pytest.approx(0.7868229)
+    assert data["explainability_status"] == "available"
+    assert data["global_shap"]["output_scale"] == "positive-class probability"
+    assert data["global_shap"]["max_absolute_additivity_error"] < 1e-4
+    assert len(data["global_shap"]["features"]) == 32
+    assert "explanations" not in data
+    assert "PRIVATE-" not in response.text
+    assert "provider_case_" not in response.text
+    assert "target_binary" not in response.text
+
+
+def test_model_insights_keeps_metrics_when_global_shap_is_missing(client, monkeypatch, tmp_path):
+    import shutil
+    import backend.app.api.routes.risk as risk_routes
+
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    shutil.copyfile("models/provider_risk_metrics.json", model_dir / "provider_risk_metrics.json")
+    monkeypatch.setattr(risk_routes, "PROJECT_ROOT", tmp_path)
+    response = client.get("/api/v1/risk/insights")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["validation_metrics"]
+    assert body["explainability_status"] == "unavailable"
+    assert body["global_shap"] is None
+    assert "unavailable" in body["explainability_note"]
 
 
 def test_assess_response_and_score_match_saved_pipeline(client):
@@ -104,6 +141,7 @@ def test_unavailable_model_health_and_inference(client):
         assert client.post("/api/v1/risk/assess", json={"features": valid_features()}).status_code == 503
         assert client.post("/api/v1/risk/assess/batch", json={"providers": [{"features": valid_features()}]}).status_code == 503
         assert client.get("/api/v1/risk/features").status_code == 503
+        assert client.get("/api/v1/risk/insights").status_code == 503
     finally:
         app.dependency_overrides.pop(get_risk_service, None)
 

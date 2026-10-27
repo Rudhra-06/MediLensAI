@@ -122,6 +122,54 @@ class FeatureListResponse(BaseModel):
     model_version: str
 
 
+class ValidationMetricSet(BaseModel):
+    precision: FiniteFloat = Field(ge=0.0, le=1.0)
+    recall: FiniteFloat = Field(ge=0.0, le=1.0)
+    f1: FiniteFloat = Field(ge=0.0, le=1.0)
+    average_precision: FiniteFloat = Field(ge=0.0, le=1.0)
+    roc_auc: FiniteFloat = Field(ge=0.0, le=1.0)
+    confusion_matrix_labels_0_1: list[list[int]]
+
+
+class GlobalShapFeature(BaseModel):
+    feature: str
+    mean_absolute_contribution: FiniteFloat = Field(ge=0.0)
+    mean_signed_contribution: FiniteFloat
+    direction: Literal[
+        "increases model output on average",
+        "decreases model output on average",
+        "zero average signed contribution",
+    ]
+
+
+class GlobalShapSummary(BaseModel):
+    shap_version: str
+    output_class: str
+    output_scale: Literal["positive-class probability"]
+    feature_count: int
+    background_sample_count: int
+    explanation_sample_count: int
+    importance_method: str
+    interpretation_limit: str
+    max_absolute_additivity_error: FiniteFloat = Field(ge=0.0)
+    features: list[GlobalShapFeature]
+
+
+class ProviderRiskInsightsResponse(BaseModel):
+    model_version: str
+    model_name: str
+    selected_model: str
+    selection_metric: str
+    split_strategy: str
+    train_provider_count: int
+    validation_provider_count: int
+    validation_metrics: dict[str, ValidationMetricSet]
+    limitations: list[str]
+    explainability_status: Literal["available", "unavailable"]
+    explainability_note: Optional[str] = None
+    global_shap: Optional[GlobalShapSummary] = None
+
+
 def required_artifact_paths(project_root: Path = PROJECT_ROOT) -> dict[str, Path]:
     """Return only the fixed local files used by this API."""
     return {
@@ -389,6 +437,117 @@ def list_provider_features(
         features=[FeatureDescription(**item) for item in service.feature_descriptions],
         count=len(service.feature_descriptions),
         model_version=MODEL_VERSION,
+    )
+
+
+@router.get(
+    "/insights",
+    response_model=ProviderRiskInsightsResponse,
+    summary="Read aggregate validation metrics and global SHAP importance",
+)
+def provider_risk_insights(
+    service: Optional[ProviderRiskService] = Depends(get_risk_service),
+) -> ProviderRiskInsightsResponse:
+    """Return only aggregate model metrics and global feature contributions.
+
+    Local explanation samples, provider aliases, labels and raw feature rows are
+    deliberately excluded from this public response.
+    """
+    if service is None:
+        raise HTTPException(status_code=503, detail="Provider risk model is unavailable.")
+    metrics_path = PROJECT_ROOT / "models" / "provider_risk_metrics.json"
+    shap_path = PROJECT_ROOT / "models" / "shap_global_importance.json"
+    try:
+        metrics_data = json.loads(metrics_path.read_text(encoding="utf-8"))
+        selected_model = metrics_data["selected_model"]
+        raw_metrics = metrics_data["validation_metrics"]
+        split = metrics_data["split"]
+        if selected_model != service.model_name or not isinstance(raw_metrics, dict):
+            raise ValueError("Saved validation metrics do not match the loaded model.")
+        validation_metrics: dict[str, ValidationMetricSet] = {}
+        for name in ("dummy_prior", "logistic_regression", "random_forest"):
+            metric = raw_metrics[name]
+            matrix = metric["confusion_matrix_labels_0_1"]
+            if (
+                not isinstance(matrix, list)
+                or len(matrix) != 2
+                or any(not isinstance(row, list) or len(row) != 2 for row in matrix)
+            ):
+                raise ValueError("Saved confusion matrix has an incompatible shape.")
+            validation_metrics[name] = ValidationMetricSet(
+                **{key: metric[key] for key in (
+                    "precision", "recall", "f1", "average_precision", "roc_auc",
+                )},
+                confusion_matrix_labels_0_1=matrix,
+            )
+        train_count = int(split["train_providers"])
+        validation_count = int(split["validation_providers"])
+        if train_count < 1 or validation_count < 1:
+            raise ValueError("Saved validation split counts are invalid.")
+        limitations = metrics_data["limitations"]
+        if not isinstance(limitations, list) or any(not isinstance(item, str) for item in limitations):
+            raise ValueError("Saved validation limitations have an incompatible schema.")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Saved validation metric artifact is missing or incompatible.",
+        ) from exc
+
+    global_shap: Optional[GlobalShapSummary] = None
+    explainability_note: Optional[str] = None
+    if not shap_path.is_file():
+        explainability_note = "Global SHAP artifact is unavailable."
+    else:
+        try:
+            shap_data = json.loads(shap_path.read_text(encoding="utf-8"))
+            shap_rows = shap_data["features"]
+            shap_names = [row["feature"] for row in shap_rows]
+            verification = shap_data["output_scale_verification"]
+            max_additivity_error = float(verification["max_absolute_additivity_error"])
+            tolerance = float(verification["tolerance"])
+            if (
+                shap_data.get("model") != service.model_name
+                or shap_data.get("output_class", "").split(" ")[0] != "PotentialFraud=1"
+                or shap_data.get("output_scale") != "positive-class probability"
+                or shap_data.get("feature_count") != len(service.feature_names)
+                or len(shap_rows) != len(service.feature_names)
+                or len(set(shap_names)) != len(shap_names)
+                or set(shap_names) != set(service.feature_names)
+                or not math.isfinite(max_additivity_error)
+                or not math.isfinite(tolerance)
+                or tolerance <= 0
+                or max_additivity_error > tolerance
+            ):
+                raise ValueError("Saved global SHAP schema does not match the loaded model.")
+            global_shap = GlobalShapSummary(
+                shap_version=str(shap_data["shap_version"]),
+                output_class=str(shap_data["output_class"]),
+                output_scale=shap_data["output_scale"],
+                feature_count=int(shap_data["feature_count"]),
+                background_sample_count=int(shap_data["background_sample_count"]),
+                explanation_sample_count=int(shap_data["explanation_sample_count"]),
+                importance_method=str(shap_data["importance_method"]),
+                interpretation_limit=str(shap_data["interpretation_limit"]),
+                max_absolute_additivity_error=max_additivity_error,
+                features=[GlobalShapFeature(**row) for row in shap_rows],
+            )
+        except Exception:
+            # Metrics remain useful if SHAP is absent or incompatible; never expose partial data.
+            explainability_note = "Global SHAP artifact is unavailable or incompatible with the loaded feature schema."
+
+    return ProviderRiskInsightsResponse(
+        model_version=MODEL_VERSION,
+        model_name=service.model_name,
+        selected_model=selected_model,
+        selection_metric=str(metrics_data["selection_metric"]),
+        split_strategy="Single stratified train/validation holdout; validation Average Precision selected the model; no independent test set.",
+        train_provider_count=train_count,
+        validation_provider_count=validation_count,
+        validation_metrics=validation_metrics,
+        limitations=limitations,
+        explainability_status="available" if global_shap is not None else "unavailable",
+        explainability_note=explainability_note,
+        global_shap=global_shap,
     )
 
 
