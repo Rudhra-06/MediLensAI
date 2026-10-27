@@ -3,10 +3,13 @@ import pytest
 from fastapi.testclient import TestClient
 from backend.app.main import app
 
-client = TestClient(app)
+@pytest.fixture(scope="module")
+def client():
+    with TestClient(app) as test_client:
+        yield test_client
 
 
-def test_root_endpoint():
+def test_root_endpoint(client):
     """Verify that the root endpoint returns service metadata."""
     response = client.get("/")
     assert response.status_code == 200
@@ -17,7 +20,7 @@ def test_root_endpoint():
     assert "proof of fraud" in data["notice"]
 
 
-def test_health_endpoint():
+def test_health_endpoint(client):
     """Verify health endpoint distinguishes API health from model readiness."""
     response = client.get("/api/health")
     assert response.status_code == 200
@@ -29,18 +32,18 @@ def test_health_endpoint():
     assert data["version"] == "0.1.0"
     assert "timestamp" in data
 
-    # Model readiness must be explicitly not ready in this initial phase
+    # Model readiness reflects the startup-loaded inference artifact.
     assert "model_readiness" in data
-    assert data["model_readiness"]["ready"] is False
-    assert data["model_readiness"]["status"] == "not_ready"
-    assert "not yet trained" in data["model_readiness"]["reason"]
+    assert data["model_readiness"]["ready"] is True
+    assert data["model_readiness"]["status"] == "ready"
+    assert data["model_readiness"]["loaded_model_version"] == "provider-risk-rf-v1"
 
     # Auxiliary subsystems are honestly reported
     assert data["subsystems"]["database"] == "not_configured"
     assert data["subsystems"]["claims_pipeline"] == "not_started"
 
 
-def test_cors_headers():
+def test_cors_headers(client):
     """Verify CORS headers respond correctly for permitted frontend origins."""
     headers = {
         "Origin": "http://localhost:5173",
